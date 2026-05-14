@@ -1175,9 +1175,9 @@ Return ONLY valid JSON:
     finally{setLoading(false);}
   };
 
-  useEffect(()=>{
-    if (dayIdx!==null && ordered[dayIdx]) getRecipe(ordered[dayIdx]);
-  },[dayIdx]);
+  // Clear previously-loaded recipe when the user picks a different day.
+  // Recipe is only fetched when the user explicitly clicks "Show Recipe".
+  useEffect(()=>{ setRecipe(null); setErr(null); }, [dayIdx]);
 
   if (!menu.length) return (
     <div style={{flex:1,overflow:"auto",padding:16}}>
@@ -1200,16 +1200,25 @@ Return ONLY valid JSON:
             const isSel = i===dayIdx;
             return (
               <button key={d.id} onClick={()=>setDayIdx(i)} style={{
-                flexShrink:0,width:48,height:52,borderRadius:12,cursor:"pointer",
+                flexShrink:0,width:118,minHeight:64,borderRadius:12,cursor:"pointer",
                 border:isSel?"none":"1.5px solid var(--border)",
                 background:isSel?"var(--sage)":isToday?"var(--sage-l)":"white",
-                display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,
-                fontFamily:"'DM Sans',sans-serif"
+                display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
+                padding:"6px 8px",fontFamily:"'DM Sans',sans-serif"
               }}>
-                <span style={{fontSize:18}}>{d.emoji}</span>
-                <span style={{fontSize:9,fontWeight:700,color:isSel?"white":isToday?"var(--sage)":"var(--gray)"}}>
-                  {isToday?"Today":`D${i+1}`}
-                </span>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontSize:16,lineHeight:1}}>{d.emoji}</span>
+                  <span style={{fontSize:9,fontWeight:700,color:isSel?"white":isToday?"var(--sage)":"var(--gray)"}}>
+                    {isToday?"TODAY":`DAY ${i+1}`}
+                  </span>
+                </div>
+                <span style={{
+                  fontSize:11,fontWeight:600,lineHeight:1.2,textAlign:"center",
+                  color:isSel?"white":"var(--dark)",
+                  overflow:"hidden",textOverflow:"ellipsis",
+                  display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",
+                  wordBreak:"break-word"
+                }}>{d.name}</span>
               </button>
             );
           })}
@@ -1219,7 +1228,7 @@ Return ONLY valid JSON:
       {/* Recipe content */}
       <div style={{flex:1,overflowY:"auto",padding:16}}>
         {dayIdx===null
-          ? <EmptyState emoji="👆" title="Select a day" sub="Tap any day above to load that evening's recipe"/>
+          ? <EmptyState emoji="👆" title="Select a day" sub="Tap any day above, then hit 'Show Recipe'"/>
           : loading
           ? <div style={{textAlign:"center",padding:"40px 0"}}>
               <div style={{fontSize:40,marginBottom:14}}>{ordered[dayIdx]?.emoji}</div>
@@ -1233,6 +1242,17 @@ Return ONLY valid JSON:
               <div style={{background:"var(--red-l)",border:"1px solid var(--red-m)",borderRadius:12,
                 padding:"12px 14px",marginBottom:12,fontSize:13,color:"var(--red)"}}>⚠️ {err}</div>
               <PrimaryBtn onClick={()=>getRecipe(ordered[dayIdx])}>Try Again</PrimaryBtn>
+            </div>
+          : !recipe
+          ? <div style={{textAlign:"center",padding:"32px 16px"}}>
+              <div style={{fontSize:48,marginBottom:12}}>{ordered[dayIdx]?.emoji}</div>
+              <div style={{fontFamily:"'Lora',serif",fontSize:20,fontWeight:700,color:"var(--dark)",marginBottom:6}}>
+                {ordered[dayIdx]?.name}
+              </div>
+              <div style={{fontSize:12,color:"var(--gray)",marginBottom:20}}>
+                {dayIdx===todayOffset ? "Tonight's dinner" : `Day ${dayIdx+1} of cycle`}
+              </div>
+              <PrimaryBtn onClick={()=>getRecipe(ordered[dayIdx])}>🍳 Show Recipe</PrimaryBtn>
             </div>
           : recipe && (
             <div className="fu">
