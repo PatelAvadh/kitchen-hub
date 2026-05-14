@@ -106,12 +106,13 @@ const TABS = [
 ];
 
 const KEYS = {
-  DISHES:  "hh-dishes-v2",
-  MENU:    "hh-menu-v2",
-  GROCERY: "hh-grocery-v2",
-  COSTCO:  "hh-costco-v2",
-  PREP:    "hh-prep-v2",
-  CYCLE:   "hh-cycle-v2",
+  DISHES:       "hh-dishes-v2",
+  MENU:         "hh-menu-v2",
+  GROCERY:      "hh-grocery-v2",
+  COSTCO:       "hh-costco-v2",
+  COSTCO_ITEMS: "hh-costco-items-v1",
+  PREP:         "hh-prep-v2",
+  CYCLE:        "hh-cycle-v2",
 };
 
 // ── Storage — Supabase (permanent, shared between both users) ────────────────
@@ -148,16 +149,14 @@ const db = {
 
 // ── Claude API ───────────────────────────────────────────────────────────────
 async function claude(prompt, search = false, tokens = 2000) {
-  const body = {
-    model: "claude-sonnet-4-20250514", max_tokens: tokens,
-    messages: [{ role: "user", content: prompt }],
-  };
-  if (search) body.tools = [{type:"web_search_20250305", name:"web_search"}];
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
+  const r = await fetch("/api/claude", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, search, tokens }),
   });
   const d = await r.json();
-  return (d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+  if (d.error) throw new Error(d.error);
+  return (d.content || []).filter(b => b.type === "text").map(b => b.text).join("");
 }
 
 function parseJSON(text) {
@@ -233,23 +232,59 @@ function PrimaryBtn({onClick, disabled, loading, children, color="sage", style:s
 }
 
 // ── LIBRARY TAB ──────────────────────────────────────────────────────────────
-function LibraryTab({dishes, menu, onToggle, onAdd}) {
+function DishForm({dish, onSave, onCancel, saveLabel="Save Changes"}) {
+  const [name, setName] = useState(dish?.name || "");
+  const [cat, setCat]   = useState(dish?.cat  || "veggie");
+  const [exp, setExp]   = useState(dish?.exp  || "medium");
+
+  const submit = () => {
+    if (!name.trim()) return;
+    onSave({ ...(dish || {}), name: name.trim(), cat, exp,
+      emoji: dish?.emoji || "🍽", tags: dish?.tags || [], protein: dish?.protein || false });
+  };
+
+  return (
+    <div style={{background:"white",borderRadius:14,border:"1.5px solid var(--sage-m)",padding:16}}>
+      <input value={name} onChange={e=>setName(e.target.value)}
+        placeholder="Dish name (e.g. Palak Paneer)"
+        style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid var(--border)",
+          fontSize:14,outline:"none",marginBottom:10}}
+        onFocus={e=>e.target.style.borderColor="var(--sage)"}
+        onBlur={e=>e.target.style.borderColor="var(--border)"}
+      />
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+        <select value={cat} onChange={e=>setCat(e.target.value)}
+          style={{padding:"9px",borderRadius:10,border:"1.5px solid var(--border)",fontSize:13,background:"white"}}>
+          {CATS.filter(c=>c.id!=="all").map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
+        </select>
+        <select value={exp} onChange={e=>setExp(e.target.value)}
+          style={{padding:"9px",borderRadius:10,border:"1.5px solid var(--border)",fontSize:13,background:"white"}}>
+          <option value="short">Short expiry</option>
+          <option value="medium">Medium expiry</option>
+          <option value="long">Long shelf life</option>
+        </select>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <PrimaryBtn onClick={submit} style={{flex:1}}>{saveLabel}</PrimaryBtn>
+        <button onClick={onCancel} style={{
+          padding:"12px 16px",borderRadius:12,background:"transparent",
+          border:"1.5px solid var(--border)",color:"var(--gray)",
+          fontFamily:"'DM Sans',sans-serif",fontSize:14,cursor:"pointer"
+        }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function LibraryTab({dishes, menu, onToggle, onAdd, onEdit}) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newCat, setNewCat] = useState("veggie");
-  const [newExp, setNewExp] = useState("medium");
+  const [editingId, setEditingId] = useState(null);
 
   const filtered = dishes.filter(d =>
     d.name.toLowerCase().includes(q.toLowerCase()) && (cat==="all" || d.cat===cat)
   );
-
-  const addDish = () => {
-    if (!newName.trim()) return;
-    onAdd({id:Date.now(), name:newName.trim(), cat:newCat, emoji:"🍽", exp:newExp, tags:[], protein:false});
-    setNewName(""); setShowAdd(false);
-  };
 
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
@@ -296,16 +331,30 @@ function LibraryTab({dishes, menu, onToggle, onAdd}) {
                 const sel = menu.includes(d.id);
                 const ec = EXP[d.exp];
                 const maxed = !sel && menu.length>=14;
+                if (editingId === d.id) {
+                  return (
+                    <div key={d.id} style={{marginBottom:2}}>
+                      <div style={{fontSize:12,fontWeight:600,color:"var(--sage)",marginBottom:6}}>✏️ Editing {d.name}</div>
+                      <DishForm
+                        dish={d}
+                        saveLabel="Save Changes"
+                        onSave={updated => { onEdit(updated); setEditingId(null); }}
+                        onCancel={() => setEditingId(null)}
+                      />
+                    </div>
+                  );
+                }
                 return (
-                  <div key={d.id} onClick={()=>!maxed && onToggle(d.id)} style={{
+                  <div key={d.id} style={{
                     display:"flex",alignItems:"center",gap:12,
                     background: sel?"var(--sage-l)":maxed?"#fafafa":"white",
                     border:`1.5px solid ${sel?"var(--sage-m)":"var(--border)"}`,
-                    borderRadius:14,padding:"11px 14px",cursor:maxed?"not-allowed":"pointer",
+                    borderRadius:14,padding:"11px 14px",
                     opacity:maxed?0.5:1,transition:"all .15s"
                   }}>
-                    <div style={{fontSize:26,flexShrink:0}}>{d.emoji}</div>
-                    <div style={{flex:1,minWidth:0}}>
+                    <div onClick={()=>!maxed && onToggle(d.id)}
+                      style={{fontSize:26,flexShrink:0,cursor:maxed?"not-allowed":"pointer"}}>{d.emoji}</div>
+                    <div onClick={()=>!maxed && onToggle(d.id)} style={{flex:1,minWidth:0,cursor:maxed?"not-allowed":"pointer"}}>
                       <div style={{fontSize:14,fontWeight:600,color:sel?"var(--sage)":"var(--dark)"}}>{d.name}</div>
                       <div style={{display:"flex",gap:4,marginTop:5,flexWrap:"wrap"}}>
                         <span style={{fontSize:10,padding:"2px 7px",borderRadius:20,fontWeight:700,
@@ -318,7 +367,11 @@ function LibraryTab({dishes, menu, onToggle, onAdd}) {
                         ))}
                       </div>
                     </div>
-                    <Check checked={sel} size={22}/>
+                    <button onClick={e=>{e.stopPropagation();setEditingId(d.id);}} style={{
+                      flexShrink:0,padding:"5px 9px",borderRadius:8,border:"1.5px solid var(--border)",
+                      background:"white",cursor:"pointer",fontSize:14,color:"var(--gray)",lineHeight:1
+                    }}>✏️</button>
+                    <Check checked={sel} size={22} onClick={()=>!maxed && onToggle(d.id)}/>
                   </div>
                 );
               })}
@@ -332,35 +385,13 @@ function LibraryTab({dishes, menu, onToggle, onAdd}) {
               border:"1.5px dashed var(--border)",background:"transparent",
               color:"var(--gray)",fontSize:14,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"
             }}>+ Add a dish to library</button>
-          : <div style={{marginTop:12,background:"white",borderRadius:14,border:"1.5px solid var(--sage-m)",padding:16}}>
-              <div style={{fontWeight:600,fontSize:14,color:"var(--dark)",marginBottom:12}}>Add New Dish</div>
-              <input value={newName} onChange={e=>setNewName(e.target.value)}
-                placeholder="Dish name (e.g. Palak Paneer)"
-                style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid var(--border)",
-                  fontSize:14,outline:"none",marginBottom:10}}
-                onFocus={e=>e.target.style.borderColor="var(--sage)"}
-                onBlur={e=>e.target.style.borderColor="var(--border)"}
+          : <div style={{marginTop:12}}>
+              <div style={{fontWeight:600,fontSize:14,color:"var(--dark)",marginBottom:8}}>Add New Dish</div>
+              <DishForm
+                saveLabel="Add to Library"
+                onSave={d => { onAdd({id:Date.now(), ...d}); setShowAdd(false); }}
+                onCancel={() => setShowAdd(false)}
               />
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
-                <select value={newCat} onChange={e=>setNewCat(e.target.value)}
-                  style={{padding:"9px",borderRadius:10,border:"1.5px solid var(--border)",fontSize:13,background:"white"}}>
-                  {CATS.filter(c=>c.id!=="all").map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
-                </select>
-                <select value={newExp} onChange={e=>setNewExp(e.target.value)}
-                  style={{padding:"9px",borderRadius:10,border:"1.5px solid var(--border)",fontSize:13,background:"white"}}>
-                  <option value="short">Short expiry</option>
-                  <option value="medium">Medium expiry</option>
-                  <option value="long">Long shelf life</option>
-                </select>
-              </div>
-              <div style={{display:"flex",gap:8}}>
-                <PrimaryBtn onClick={addDish} style={{flex:1}}>Add to Library</PrimaryBtn>
-                <button onClick={()=>setShowAdd(false)} style={{
-                  padding:"12px 16px",borderRadius:12,background:"transparent",
-                  border:"1.5px solid var(--border)",color:"var(--gray)",
-                  fontFamily:"'DM Sans',sans-serif",fontSize:14,cursor:"pointer"
-                }}>Cancel</button>
-              </div>
             </div>
         }
         <div style={{height:20}}/>
@@ -374,6 +405,7 @@ function MenuTab({dishes, menu, cycleStart, onStartCycle}) {
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showLunch, setShowLunch] = useState(false);
+  const [restarted, setRestarted] = useState(false);
 
   const ordered = [...menu]
     .map(id=>dishes.find(d=>d.id===id)).filter(Boolean)
@@ -423,10 +455,13 @@ Return ONLY valid JSON:
           </div>
           <div style={{fontSize:12,color:"var(--gray)",marginTop:2}}>{menu.length}/14 dinners planned</div>
         </div>
-        <button onClick={onStartCycle} style={{
-          padding:"9px 16px",borderRadius:10,background:"var(--sage)",color:"white",
-          border:"none",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"
-        }}>{cycleStart?"↻ Restart":"▶ Start Today"}</button>
+        <button onClick={()=>{ onStartCycle(); setRestarted(true); setTimeout(()=>setRestarted(false),2500); }} style={{
+          padding:"9px 16px",borderRadius:10,
+          background:restarted?"var(--sage-l)":"var(--sage)",
+          color:restarted?"var(--sage)":"white",
+          border:restarted?"1.5px solid var(--sage-m)":"none",
+          fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",transition:"all .2s"
+        }}>{restarted?"✓ Restarted!":cycleStart?"↻ Restart":"▶ Start Today"}</button>
       </div>
 
       {/* Expiry legend */}
@@ -555,8 +590,12 @@ function GroceryTab({dishes, menu, grocery, setGrocery}) {
   const [gen, setGen] = useState(false);
   const [err, setErr] = useState(null);
   const [costcoChk, setCostcoChk] = useState({});
+  const [costcoItems, setCostcoItems] = useState(COSTCO_ITEMS);
 
-  useEffect(()=>{ db.get(KEYS.COSTCO).then(d=>{if(d)setCostcoChk(d);}); },[]);
+  useEffect(()=>{
+    db.get(KEYS.COSTCO).then(d=>{if(d)setCostcoChk(d);});
+    db.get(KEYS.COSTCO_ITEMS).then(d=>{if(d)setCostcoItems(d);});
+  },[]);
 
   const generate = async () => {
     if (!menu.length){setErr("Select dishes first.");return;}
@@ -622,6 +661,21 @@ Return ONLY valid JSON:
     await db.set(KEYS.COSTCO, updated);
   };
 
+  const addCostcoItem = async (item) => {
+    const updated = [...costcoItems, item];
+    setCostcoItems(updated);
+    await db.set(KEYS.COSTCO_ITEMS, updated);
+  };
+
+  const deleteCostcoItem = async (id) => {
+    const updated = costcoItems.filter(i => i.id !== id);
+    setCostcoItems(updated);
+    const newChk = {...costcoChk};
+    delete newChk[id];
+    setCostcoChk(newChk);
+    await Promise.all([db.set(KEYS.COSTCO_ITEMS, updated), db.set(KEYS.COSTCO, newChk)]);
+  };
+
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       {/* Sub-tab bar */}
@@ -638,7 +692,7 @@ Return ONLY valid JSON:
       <div style={{flex:1,overflow:"hidden"}}>
         {sub==="nofrills"
           ? <NoFrillsTab grocery={grocery} gen={gen} err={err} onGenerate={generate} onToggle={toggleItem}/>
-          : <CostcoTab checked={costcoChk} onToggle={toggleCostco}/>
+          : <CostcoTab items={costcoItems} checked={costcoChk} onToggle={toggleCostco} onAdd={addCostcoItem} onDelete={deleteCostcoItem}/>
         }
       </div>
     </div>
@@ -771,7 +825,17 @@ function NoFrillsTab({grocery, gen, err, onGenerate, onToggle}) {
   );
 }
 
-function CostcoTab({checked, onToggle}) {
+function CostcoTab({items, checked, onToggle, onAdd, onDelete}) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newNote, setNewNote] = useState("");
+
+  const submit = () => {
+    if (!newName.trim()) return;
+    onAdd({id: "c-" + Date.now(), name: newName.trim(), note: newNote.trim() || "Custom item"});
+    setNewName(""); setNewNote(""); setShowAdd(false);
+  };
+
   return (
     <div style={{height:"100%",overflowY:"auto",padding:16}}>
       <div style={{background:"var(--terra-l)",border:"1px solid var(--terra-m)",borderRadius:12,
@@ -779,21 +843,60 @@ function CostcoTab({checked, onToggle}) {
         🏬 Buy on your next Costco run — not part of the bi-weekly No Frills trip
       </div>
       <div style={{background:"white",borderRadius:14,border:"1px solid var(--border)",overflow:"hidden"}}>
-        {COSTCO_ITEMS.map((item,i)=>(
-          <div key={item.id} onClick={()=>onToggle(item.id)} style={{
-            display:"flex",alignItems:"center",gap:12,padding:"13px 14px",cursor:"pointer",
-            borderBottom:i<COSTCO_ITEMS.length-1?"1px solid var(--border)":"none",
+        {items.map((item,i)=>(
+          <div key={item.id} style={{
+            display:"flex",alignItems:"center",gap:12,padding:"13px 14px",
+            borderBottom:i<items.length-1?"1px solid var(--border)":"none",
             opacity:checked[item.id]?0.4:1
           }}>
-            <Check checked={!!checked[item.id]} color="terra" size={20}/>
-            <div style={{flex:1}}>
-              <div style={{fontSize:14,fontWeight:500,color:"var(--dark)",
-                textDecoration:checked[item.id]?"line-through":"none"}}>{item.name}</div>
-              <div style={{fontSize:12,color:"var(--gray)",marginTop:2}}>{item.note}</div>
+            <div onClick={()=>onToggle(item.id)} style={{display:"flex",alignItems:"center",gap:12,flex:1,cursor:"pointer"}}>
+              <Check checked={!!checked[item.id]} color="terra" size={20}/>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:500,color:"var(--dark)",
+                  textDecoration:checked[item.id]?"line-through":"none"}}>{item.name}</div>
+                <div style={{fontSize:12,color:"var(--gray)",marginTop:2}}>{item.note}</div>
+              </div>
             </div>
+            <button onClick={()=>onDelete(item.id)} style={{
+              flexShrink:0,padding:"4px 9px",borderRadius:8,border:"1.5px solid var(--red-m)",
+              background:"var(--red-l)",cursor:"pointer",fontSize:13,color:"var(--red)",lineHeight:1,fontWeight:700
+            }}>✕</button>
           </div>
         ))}
       </div>
+
+      {showAdd
+        ? <div style={{marginTop:12,background:"white",borderRadius:14,border:"1.5px solid var(--terra-m)",padding:14}}>
+            <div style={{fontWeight:600,fontSize:14,color:"var(--dark)",marginBottom:10}}>Add Costco Item</div>
+            <input value={newName} onChange={e=>setNewName(e.target.value)}
+              placeholder="Item name (e.g. Protein Bars)"
+              style={{width:"100%",padding:"9px 12px",borderRadius:10,border:"1.5px solid var(--border)",
+                fontSize:14,outline:"none",marginBottom:8}}
+              onFocus={e=>e.target.style.borderColor="var(--terra)"}
+              onBlur={e=>e.target.style.borderColor="var(--border)"}
+            />
+            <input value={newNote} onChange={e=>setNewNote(e.target.value)}
+              placeholder="Note (e.g. Buy when almost empty)"
+              style={{width:"100%",padding:"9px 12px",borderRadius:10,border:"1.5px solid var(--border)",
+                fontSize:14,outline:"none",marginBottom:12}}
+              onFocus={e=>e.target.style.borderColor="var(--terra)"}
+              onBlur={e=>e.target.style.borderColor="var(--border)"}
+            />
+            <div style={{display:"flex",gap:8}}>
+              <PrimaryBtn onClick={submit} color="terra" style={{flex:1}}>Add Item</PrimaryBtn>
+              <button onClick={()=>setShowAdd(false)} style={{
+                padding:"12px 14px",borderRadius:12,background:"transparent",
+                border:"1.5px solid var(--border)",color:"var(--gray)",
+                fontFamily:"'DM Sans',sans-serif",fontSize:14,cursor:"pointer"
+              }}>Cancel</button>
+            </div>
+          </div>
+        : <button onClick={()=>setShowAdd(true)} style={{
+            width:"100%",padding:"12px",marginTop:12,borderRadius:14,
+            border:"1.5px dashed var(--border)",background:"transparent",
+            color:"var(--gray)",fontSize:14,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"
+          }}>+ Add item</button>
+      }
       <div style={{height:20}}/>
     </div>
   );
@@ -1186,9 +1289,20 @@ export default function App() {
     setDishes(upd); await db.set(KEYS.DISHES, upd);
   };
 
+  const editDish = async (dish) => {
+    const upd = dishes.map(d => d.id === dish.id ? dish : d);
+    setDishes(upd); await db.set(KEYS.DISHES, upd);
+  };
+
   const startCycle = async () => {
     const now = new Date().toISOString();
-    setCycleStart(now); await db.set(KEYS.CYCLE, now);
+    setCycleStart(now);
+    setGrocery(null);
+    await Promise.all([
+      db.set(KEYS.CYCLE, now),
+      db.set(KEYS.GROCERY, null),
+      db.set(KEYS.PREP, null),
+    ]);
   };
 
   if (!ready) return (
@@ -1231,7 +1345,7 @@ export default function App() {
 
       {/* Content */}
       <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-        {tab==="library" && <LibraryTab dishes={dishes} menu={menu} onToggle={toggleMenu} onAdd={addDish}/>}
+        {tab==="library" && <LibraryTab dishes={dishes} menu={menu} onToggle={toggleMenu} onAdd={addDish} onEdit={editDish}/>}
         {tab==="menu"    && <MenuTab dishes={dishes} menu={menu} cycleStart={cycleStart} onStartCycle={startCycle}/>}
         {tab==="grocery" && <GroceryTab dishes={dishes} menu={menu} grocery={grocery} setGrocery={setGrocery}/>}
         {tab==="prep"    && <PrepTab dishes={dishes} menu={menu}/>}
