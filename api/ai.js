@@ -8,53 +8,49 @@ module.exports = async function handler(req, res) {
 
   const { prompt, search = false, tokens = 2000 } = req.body;
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: "GEMINI_API_KEY not configured" });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured" });
 
   const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: {
-      maxOutputTokens: Math.max(tokens, 4000),
-      temperature: 0.7,
-    },
+    model: "claude-sonnet-4-5",
+    max_tokens: Math.max(tokens, 2000),
+    messages: [{ role: "user", content: prompt }],
+  };
+
+  const headers = {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
   };
 
   if (search) {
-    body.tools = [{ googleSearch: {} }];
-  } else {
-    body.generationConfig.responseMimeType = "application/json";
+    body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+    headers["anthropic-beta"] = "web-search-2025-03-05";
   }
 
-  const model = "gemini-2.0-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
   try {
-    const response = await fetch(url, {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
     });
     const data = await response.json();
 
-    if (data.error) {
-      console.error("Gemini error:", JSON.stringify(data.error));
-      return res.status(response.status).json({
-        error: data.error.message || "Gemini error",
-        details: data.error,
-      });
+    if (data.type === "error" || data.error) {
+      const msg = data.error?.message || data.message || "Anthropic error";
+      console.error("Anthropic error:", JSON.stringify(data));
+      return res.status(response.status).json({ error: msg });
     }
 
-    const candidate = data.candidates?.[0];
-    const text = (candidate?.content?.parts || [])
-      .map(p => p.text)
-      .filter(Boolean)
+    const text = (data.content || [])
+      .filter(b => b.type === "text")
+      .map(b => b.text)
       .join("");
 
     if (!text) {
-      console.error("Empty Gemini response:", JSON.stringify(data).slice(0, 1500));
+      console.error("Empty Anthropic response:", JSON.stringify(data).slice(0, 1500));
       return res.status(500).json({
-        error: `Empty response from Gemini (finishReason: ${candidate?.finishReason || "unknown"}). ${candidate?.finishReason === "SAFETY" ? "Blocked by safety filter." : candidate?.finishReason === "MAX_TOKENS" ? "Hit token limit — try regenerating." : "Try regenerating."}`,
-        raw: data,
+        error: `Empty response (stop_reason: ${data.stop_reason || "unknown"}). Try regenerating.`,
       });
     }
 
