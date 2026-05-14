@@ -9,7 +9,7 @@ module.exports = async function handler(req, res) {
   const { prompt, search = false, tokens = 2000 } = req.body;
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured" });
+  if (apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured" });
 
   const body = {
     model: "claude-sonnet-4-5",
