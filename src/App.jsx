@@ -406,6 +406,7 @@ function MenuTab({dishes, menu, cycleStart, onStartCycle}) {
   const [loading, setLoading] = useState(false);
   const [showLunch, setShowLunch] = useState(false);
   const [restarted, setRestarted] = useState(false);
+  const [suggestErr, setSuggestErr] = useState(null);
 
   const ordered = [...menu]
     .map(id=>dishes.find(d=>d.id===id)).filter(Boolean)
@@ -413,7 +414,7 @@ function MenuTab({dishes, menu, cycleStart, onStartCycle}) {
     .map((d,i)=>({...d, dayNum:i+1, week:i<7?1:2}));
 
   const getSuggestions = async () => {
-    setLoading(true); setSuggestions([]);
+    setLoading(true); setSuggestions([]); setSuggestErr(null);
     try {
       const chosen = ordered.map(d=>d.name);
       const notChosen = dishes.filter(d=>!menu.includes(d.id)).map(d=>d.name);
@@ -426,10 +427,14 @@ Analyze the selection and suggest up to 3 swaps to improve nutritional variety o
 
 Return ONLY valid JSON:
 {"gaps":["gap description"],"suggestions":[{"dish":"Dish Name","replaces":"Dish to swap","reason":"short reason"}]}
-`, false, 800);
+`, false, 2000);
       const p = parseJSON(txt);
       setSuggestions(p.suggestions||[]);
-    } catch(e){console.error(e);}
+      if (!p.suggestions?.length) setSuggestErr("AI returned no suggestions — try again.");
+    } catch(e){
+      console.error(e);
+      setSuggestErr(e.message || "Failed to get suggestions");
+    }
     finally{setLoading(false);}
   };
 
@@ -502,6 +507,12 @@ Return ONLY valid JSON:
             {loading&&<Spinner size={12}/>} {loading?"Thinking…":"Get Suggestions"}
           </button>
         </div>
+        {suggestErr && (
+          <div style={{background:"var(--red-l)",border:"1px solid var(--red-m)",borderRadius:10,
+            padding:"10px 12px",marginTop:12,fontSize:12,color:"var(--red)"}}>
+            ⚠️ {suggestErr}
+          </div>
+        )}
         {suggestions.map((s,i)=>(
           <div key={i} style={{background:"var(--sage-l)",border:"1px solid var(--sage-m)",
             borderRadius:10,padding:"10px 12px",marginTop:8}}>
@@ -639,7 +650,7 @@ Return ONLY valid JSON:
       };
       setGrocery(withChecked);
       await db.set(KEYS.GROCERY, withChecked);
-    } catch(e) { setErr("Failed — please try again."); console.error(e); }
+    } catch(e) { setErr(e.message || "Failed — please try again."); console.error(e); }
     finally { setGen(false); }
   };
 
@@ -908,12 +919,13 @@ function PrepTab({dishes, menu}) {
   const [prep, setPrep] = useState(null);
   const [loading, setLoading] = useState(false);
   const [chk, setChk] = useState({});
+  const [err, setErr] = useState(null);
 
   useEffect(()=>{ db.get(KEYS.PREP).then(d=>{if(d)setPrep(d);}); },[]);
 
   const generate = async () => {
     if (!menu.length) return;
-    setLoading(true);
+    setLoading(true); setErr(null);
     try {
       const names = menu.map(id=>dishes.find(d=>d.id===id)?.name).filter(Boolean);
       const txt = await claude(`
@@ -953,7 +965,10 @@ Return ONLY valid JSON:
       const parsed = parseJSON(txt);
       setPrep(parsed);
       await db.set(KEYS.PREP, parsed);
-    } catch(e){console.error(e);}
+    } catch(e){
+      console.error(e);
+      setErr(e.message || "Failed to generate prep guide");
+    }
     finally{setLoading(false);}
   };
 
@@ -975,6 +990,7 @@ Return ONLY valid JSON:
 
   if (!prep) return (
     <div style={{flex:1,overflow:"auto",padding:16}}>
+      {err && <div style={{background:"var(--red-l)",border:"1px solid var(--red-m)",borderRadius:12,padding:"10px 14px",marginBottom:14,fontSize:13,color:"var(--red)"}}>⚠️ {err}</div>}
       <EmptyState emoji="🥗" title="Batch Prep Guide" sub="One Sunday session → saves 15–20 min every single day this week">
         <PrimaryBtn onClick={generate}>Generate Sunday Prep Guide</PrimaryBtn>
       </EmptyState>
@@ -1067,6 +1083,7 @@ function RecipeTab({dishes, menu, cycleStart}) {
   const [dayIdx, setDayIdx] = useState(null);
   const [recipe, setRecipe] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
 
   const ordered = [...menu]
     .map(id=>dishes.find(d=>d.id===id)).filter(Boolean)
@@ -1080,7 +1097,7 @@ function RecipeTab({dishes, menu, cycleStart}) {
   },[cycleStart, menu.length]);
 
   const getRecipe = async (dish) => {
-    setLoading(true); setRecipe(null);
+    setLoading(true); setRecipe(null); setErr(null);
     try {
       const txt = await claude(`
 Generate a detailed recipe for "${dish.name}" for 2 people (generous dinner portions).
@@ -1107,7 +1124,10 @@ Return ONLY valid JSON:
   "storage":"Leftovers keep well for 2 days in fridge. Reheat with a splash of water."
 }`, false, 2000);
       setRecipe(parseJSON(txt));
-    } catch(e){console.error(e);}
+    } catch(e){
+      console.error(e);
+      setErr(e.message || "Failed to load recipe");
+    }
     finally{setLoading(false);}
   };
 
@@ -1163,6 +1183,12 @@ Return ONLY valid JSON:
                 Loading recipe…
               </div>
               <Spinner size={24}/>
+            </div>
+          : err
+          ? <div>
+              <div style={{background:"var(--red-l)",border:"1px solid var(--red-m)",borderRadius:12,
+                padding:"12px 14px",marginBottom:12,fontSize:13,color:"var(--red)"}}>⚠️ {err}</div>
+              <PrimaryBtn onClick={()=>getRecipe(ordered[dayIdx])}>Try Again</PrimaryBtn>
             </div>
           : recipe && (
             <div className="fu">
