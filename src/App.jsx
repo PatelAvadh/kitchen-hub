@@ -147,9 +147,9 @@ const db = {
   },
 };
 
-// ── Claude API ───────────────────────────────────────────────────────────────
+// ── AI API (Gemini via /api/ai proxy) ────────────────────────────────────────
 async function claude(prompt, search = false, tokens = 2000) {
-  const r = await fetch("/api/claude", {
+  const r = await fetch("/api/ai", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt, search, tokens }),
