@@ -159,11 +159,53 @@ async function claude(prompt, search = false, tokens = 2000) {
   return (d.content || []).filter(b => b.type === "text").map(b => b.text).join("");
 }
 
+function sanitizeJSON(s) {
+  // strip trailing commas before } or ] which break JSON.parse
+  return s.replace(/,(\s*[}\]])/g, "$1");
+}
+
+function extractBalanced(text, startIdx) {
+  // Walk the string tracking brace depth, respecting strings/escapes,
+  // and return the substring that forms a balanced JSON object.
+  let depth = 0, inString = false, escape = false;
+  for (let i = startIdx; i < text.length; i++) {
+    const c = text[i];
+    if (escape) { escape = false; continue; }
+    if (c === "\\") { escape = true; continue; }
+    if (c === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) return text.slice(startIdx, i + 1);
+    }
+  }
+  return null;
+}
+
 function parseJSON(text) {
-  const s = text.replace(/```json|```/g,"").trim();
-  const a = s.indexOf("{"), b = s.lastIndexOf("}");
-  if (a===-1||b===-1) throw new Error("No JSON");
-  return JSON.parse(s.slice(a, b+1));
+  // 1) Try a fenced ```json ... ``` block first
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) {
+    const inner = fence[1].trim();
+    try { return JSON.parse(sanitizeJSON(inner)); } catch {}
+  }
+
+  // 2) Walk through every "{" candidate and try to parse a balanced object
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "{") continue;
+    const slice = extractBalanced(text, i);
+    if (!slice) continue;
+    try { return JSON.parse(sanitizeJSON(slice)); } catch {}
+  }
+
+  // 3) Last resort: original heuristic (first { to last })
+  const a = text.indexOf("{"), b = text.lastIndexOf("}");
+  if (a !== -1 && b !== -1) {
+    try { return JSON.parse(sanitizeJSON(text.slice(a, b + 1))); } catch {}
+  }
+
+  throw new Error("Could not parse JSON from AI response (may be truncated)");
 }
 
 // ── Shared Small Components ──────────────────────────────────────────────────
@@ -632,7 +674,8 @@ Rules:
 - Consolidate same ingredient across all dishes (e.g. total onions for all dishes combined)
 - Group into: Produce, Dairy & Eggs, Dry Goods & Pulses, Bread & Bakery, Frozen, Other
 
-Return ONLY valid JSON:
+After searching, output ONLY the final JSON inside a single \`\`\`json code block — no commentary before or after the code block. Keep the JSON compact (no unnecessary whitespace). No trailing commas. Schema:
+\`\`\`json
 {
   "categories":[{"name":"Produce","items":[
     {"name":"Onions","qty":"5 lb bag","estimatedPrice":4.49,"shortExpiry":false,"bulkTip":"Consider 10 lb bag for 2-week supply","deal":{"store":"Walmart","salePrice":2.97,"savings":"Save $1.52"}},
@@ -642,7 +685,8 @@ Return ONLY valid JSON:
   "totalWithDeals":121.00,
   "topDeals":[{"item":"Onions","store":"Walmart","savings":"Save $1.52"}],
   "shortExpiryNote":"Schedule bhindi and cauliflower dishes in Days 1–4"
-}`, true, 4000);
+}
+\`\`\``, true, 8000);
       const parsed = parseJSON(txt);
       const withChecked = {
         ...parsed,
